@@ -617,7 +617,7 @@ public sealed class Engine
         readonly object gate = new();
         const int ShortWindowMs = 2000;
         int margin, extra, read, count, toDrop, toAdd, dropPhase, shortMin = int.MaxValue;
-        long shortStart;
+        long shortStart, catchUpUntil;
         bool buffering = true;
         int windowMin = int.MaxValue;
         int underruns;
@@ -666,8 +666,19 @@ public sealed class Engine
                         underruns++;
                         lastUnderrunTick = Environment.TickCount64;
                         extra = Math.Min(extra + ToSamples(15), ToSamples(300));
+                        catchUpUntil = Environment.TickCount64 + 3000;
                     }
                     pendingTick = -1;
+                }
+
+                // Après un blocage du lien, tout le son retenu arrive d'un coup. Le garder ajouterait des centaines
+                // de millisecondes de retard pendant de longues secondes : on saute directement au plus récent.
+                if (Environment.TickCount64 < catchUpUntil && count + n > Refill + ToSamples(60))
+                {
+                    int skip = count + n - Refill;
+                    skip = Math.Min(skip - skip % Channels, count);
+                    read = (read + skip) % ring.Length;
+                    count -= skip;
                 }
 
                 // Garde-fou : énorme retard accumulé (longue rafale après un blocage), on saute au plus récent.
