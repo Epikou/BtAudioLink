@@ -318,15 +318,18 @@ public sealed class Engine
         var clock = Stopwatch.StartNew();
         var wait = new Stopwatch();
         var logTimer = Stopwatch.StartNew();
-        long totalSamples = 0, receivedSamples = 0, maxWait = 0;
+        long totalSamples = 0, receivedSamples = 0, maxWait = 0, maxBusy = 0;
         double lateMin = double.MaxValue, lateMax = double.MinValue;
 
         Publish(new EngineStatus(LinkState.Connected, Role.Receiver, name, null, 0, 0));
         while (!token.IsCancellationRequested)
         {
+            long busy = wait.ElapsedMilliseconds;                 // temps passé hors lecture depuis la trame précédente
+            if (busy > maxBusy && wait.IsRunning) maxBusy = busy;
             wait.Restart();
             var (type, length) = ReadFrame(buffered, payload);
-            output.Ensure();
+            long waited = wait.ElapsedMilliseconds;
+            wait.Restart();
             switch (type)
             {
                 case MsgHello:
@@ -336,7 +339,7 @@ public sealed class Engine
                     Log.Write("  émetteur : " + System.Text.Encoding.UTF8.GetString(payload, 0, length));
                     break;
                 case MsgAudio:
-                    if (wait.ElapsedMilliseconds > maxWait) maxWait = wait.ElapsedMilliseconds;
+                    if (waited > maxWait) maxWait = waited;
                     int samples = decoder.Decode(payload, 0, length, pcm, 0, 5760, false);
                     // Retard de la trame par rapport à un flux parfaitement régulier : l'écart entre le plus
                     // grand et le plus petit retard est la gigue que le tampon doit absorber.
@@ -359,8 +362,8 @@ public sealed class Engine
             if (logTimer.ElapsedMilliseconds >= 5000)
             {
                 double jitter = lateMax >= lateMin ? lateMax - lateMin : 0;
-                Log.Write($"  mesures : {receivedSamples / (double)Rate:0.0} s de son en {logTimer.Elapsed.TotalSeconds:0.0} s, gigue {jitter:0} ms, attente max {maxWait} ms, {buffer.Describe()}");
-                receivedSamples = maxWait = 0;
+                Log.Write($"  mesures : {receivedSamples / (double)Rate:0.0} s de son en {logTimer.Elapsed.TotalSeconds:0.0} s, gigue {jitter:0} ms, attente max {maxWait} ms, traitement max {maxBusy} ms, {buffer.Describe()}");
+                receivedSamples = maxWait = maxBusy = 0;
                 lateMin = double.MaxValue;
                 lateMax = double.MinValue;
                 logTimer.Restart();
@@ -532,16 +535,32 @@ public sealed class Engine
         volatile bool stopped;
         long lastCheck = -10_000;
 
+        readonly object sync = new();
+        readonly Timer timer;
+        bool disposed;
+
         public Player(ISampleProvider source)
         {
             this.source = source;
             Ensure();
+            // La vérification du périphérique par défaut interroge Windows et peut prendre du temps : elle tourne
+            // sur une minuterie à part, jamais sur le fil qui reçoit le son.
+            timer = new Timer(_ => Ensure(), null, 1000, 1000);
         }
 
-        public void Ensure()
+        void Ensure()
+        {
+            lock (sync)
+            {
+                if (disposed) return;
+                EnsureLocked();
+            }
+        }
+
+        void EnsureLocked()
         {
             long now = Environment.TickCount64;
-            if (now - lastCheck < 1000) return;
+            if (now - lastCheck < 900) return;
             lastCheck = now;
 
             MMDevice? device = null;
@@ -575,7 +594,15 @@ public sealed class Engine
             }
         }
 
-        public void Dispose() => output?.Dispose();
+        public void Dispose()
+        {
+            timer.Dispose();
+            lock (sync)
+            {
+                disposed = true;
+                output?.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -588,7 +615,9 @@ public sealed class Engine
     {
         readonly float[] ring = new float[Rate * Channels * 3];
         readonly object gate = new();
-        int margin, extra, read, count, toDrop, dropPhase;
+        const int ShortWindowMs = 2000;
+        int margin, extra, read, count, toDrop, toAdd, dropPhase, shortMin = int.MaxValue;
+        long shortStart;
         bool buffering = true;
         int windowMin = int.MaxValue;
         int underruns;
@@ -608,7 +637,12 @@ public sealed class Engine
         static int ToSamples(int ms) => Rate / 1000 * ms * Channels;
         static int ToMs(long samples) => (int)(samples / Channels * 1000 / Rate);
 
-        int Refill => margin + extra + ToSamples(20);
+        // Fenêtre d'observation du plancher. Les à-coups du Bluetooth les plus forts reviennent toutes les
+        // quelques dizaines de secondes : une fenêtre trop courte les oublie et resserre trop le tampon.
+        const int WindowMs = 10_000;
+
+        // Avance reconstituée avant de (re)jouer : la marge, plus de quoi couvrir les à-coups habituels (~60 ms).
+        int Refill => margin + extra + ToSamples(60);
 
         public void SetMargin(int ms)
         {
@@ -631,7 +665,7 @@ public sealed class Engine
                     {
                         underruns++;
                         lastUnderrunTick = Environment.TickCount64;
-                        extra = Math.Min(extra + ToSamples(10), ToSamples(300));
+                        extra = Math.Min(extra + ToSamples(15), ToSamples(300));
                     }
                     pendingTick = -1;
                 }
@@ -653,8 +687,8 @@ public sealed class Engine
                 if (buffering && count >= Refill)
                 {
                     buffering = false;
-                    windowStart = Environment.TickCount64;
-                    windowMin = int.MaxValue;
+                    windowStart = shortStart = Environment.TickCount64;
+                    windowMin = shortMin = int.MaxValue;
                 }
             }
         }
@@ -677,20 +711,31 @@ public sealed class Engine
                 {
                     if (count >= 2)
                     {
-                        buffer[o++] = ring[read];
-                        buffer[o++] = ring[read + 1];
+                        float left = ring[read], right = ring[read + 1];
+                        buffer[o++] = left;
+                        buffer[o++] = right;
                         read += 2;
                         if (read >= ring.Length) read = 0;
                         count -= 2;
 
-                        // Resserrage : on saute une paire d'échantillons de temps en temps pour réduire l'avance.
-                        if (toDrop > 0 && ++dropPhase >= 48 && count >= 2)
+                        // Asservissement de l'avance, une paire d'échantillons sur 48 au plus (2 %, inaudible) :
+                        // on en saute une pour réduire l'avance, ou on en répète une pour l'augmenter.
+                        if (++dropPhase >= 48)
                         {
-                            read += 2;
-                            if (read >= ring.Length) read = 0;
-                            count -= 2;
-                            toDrop -= 2;
                             dropPhase = 0;
+                            if (toDrop > 0 && count >= 2)
+                            {
+                                read += 2;
+                                if (read >= ring.Length) read = 0;
+                                count -= 2;
+                                toDrop -= 2;
+                            }
+                            else if (toAdd > 0 && o < end)
+                            {
+                                buffer[o++] = left;
+                                buffer[o++] = right;
+                                toAdd -= 2;
+                            }
                         }
                     }
                     else
@@ -709,24 +754,41 @@ public sealed class Engine
                     // On ne sait pas encore si c'est un trou Bluetooth ou une vraie pause du son source.
                     buffering = true;
                     pendingTick = now;
-                    toDrop = 0;
+                    toDrop = toAdd = 0;
                     logMin = 0;
                     return n;
                 }
 
                 if (count < windowMin) windowMin = count;
+                if (count < shortMin) shortMin = count;
                 if (count < logMin) logMin = count;
 
-                if (now - windowStart >= 2000)
+                // Fenêtre courte : le plancher est passé sous la marge (dérive d'horloge entre les deux PC, ou
+                // à-coups plus forts). On regonfle l'avance tout de suite, avant que le tampon ne se vide.
+                if (now - shortStart >= ShortWindowMs)
                 {
-                    // Le plancher des 2 dernières secondes dépasse la marge : cet excédent ne sert à rien.
+                    int lack = margin + extra - shortMin;
+                    if (lack > ToSamples(8))
+                    {
+                        toAdd = lack - lack % Channels;
+                        toDrop = 0;
+                        windowMin = int.MaxValue;
+                        windowStart = now;
+                    }
+                    shortMin = int.MaxValue;
+                    shortStart = now;
+                }
+
+                if (now - windowStart >= WindowMs)
+                {
+                    // Fenêtre longue : le plancher dépasse la marge, cet excédent ne sert à rien.
                     int excess = windowMin - (margin + extra);
-                    toDrop = excess > ToSamples(5) ? excess - excess % Channels : 0;
+                    toDrop = excess > ToSamples(5) && toAdd == 0 ? excess - excess % Channels : 0;
                     windowMin = int.MaxValue;
                     windowStart = now;
 
-                    // Une minute sans trou : on rend un peu de la marge ajoutée.
-                    if (extra > 0 && now - lastUnderrunTick > 60_000)
+                    // Deux minutes sans trou : on rend un peu de la marge ajoutée.
+                    if (extra > 0 && now - lastUnderrunTick > 120_000)
                     {
                         extra = Math.Max(0, extra - ToSamples(5));
                         lastUnderrunTick = now;
