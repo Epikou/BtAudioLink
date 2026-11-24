@@ -1,0 +1,384 @@
+<Window x:Class="BtAudioLink.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="BtAudioLink" Width="304" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize"
+        WindowStartupLocation="Manual" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        FontFamily="/BtAudioLink;component/Assets/#Ubuntu Light, /BtAudioLink;component/Assets/#Ubuntu, Segoe UI"
+        FontSize="14" Foreground="#EBEBEB" TextOptions.TextFormattingMode="Display">
+    <!-- Charte reprise d'AutoGameSoftwareSync (jetons de la 2.0) : fond #1B1B1B, cartes #242424, lignes #353535,
+         accent #028463, états vert/orange/rouge, rayons 6 / 8 / 12. -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="Panel" Color="#1B1B1B"/>
+        <SolidColorBrush x:Key="Card" Color="#242424"/>
+        <SolidColorBrush x:Key="Card2" Color="#2B2B2B"/>
+        <SolidColorBrush x:Key="Widget" Color="#3A3A3A"/>
+        <SolidColorBrush x:Key="WidgetHover" Color="#474747"/>
+        <SolidColorBrush x:Key="Line" Color="#353535"/>
+        <SolidColorBrush x:Key="Text" Color="#EBEBEB"/>
+        <SolidColorBrush x:Key="Weak" Color="#A9A9A9"/>
+        <SolidColorBrush x:Key="Accent" Color="#028463"/>
+        <SolidColorBrush x:Key="AccentHover" Color="#259479"/>
+        <SolidColorBrush x:Key="FocusRing" Color="#5FC8A8"/>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+
+        <!-- Bascule Émetteur / Récepteur : deux pastilles dans une capsule. -->
+        <Style x:Key="Seg" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource Weak}"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="B" CornerRadius="18" Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Petite pastille de choix (profil, langue). -->
+        <Style x:Key="Chip" TargetType="RadioButton" BasedOn="{StaticResource Seg}">
+            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="B" CornerRadius="16" Background="{StaticResource Card}" BorderThickness="1" BorderBrush="{StaticResource Line}" Padding="12,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Ligne d'appareil appairé. -->
+        <Style x:Key="DeviceRow" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="B" CornerRadius="8" Background="{StaticResource Card}" BorderThickness="1" BorderBrush="{StaticResource Line}" Padding="10,0">
+                            <DockPanel>
+                                <Ellipse x:Name="Dot" DockPanel.Dock="Left" Width="10" Height="10" Margin="0,0,9,0" Stroke="{StaticResource Weak}" StrokeThickness="1.5" VerticalAlignment="Center"/>
+                                <ContentPresenter VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource Card2}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="Dot" Property="Fill" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="Dot" Property="Stroke" Value="{StaticResource Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Btn" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Background" Value="{StaticResource Widget}"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" CornerRadius="6" Background="{TemplateBinding Background}" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource WidgetHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="BtnPrimary" TargetType="Button" BasedOn="{StaticResource Btn}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource Accent}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" CornerRadius="6" Background="{TemplateBinding Background}" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource AccentHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Bouton d'icône de la barre de titre. -->
+        <Style x:Key="IconBtn" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Weak}"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" CornerRadius="6" Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource Card2}"/>
+                                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Interrupteur (38 x 22, bouton 16) comme dans AGSS. -->
+        <Style x:Key="Switch" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border Background="Transparent" MinHeight="34">
+                            <Border x:Name="Track" Width="38" Height="22" CornerRadius="11" Background="{StaticResource Widget}" BorderThickness="1" BorderBrush="Transparent" VerticalAlignment="Center">
+                                <Ellipse x:Name="Knob" Width="16" Height="16" Fill="White" HorizontalAlignment="Left" Margin="2,0,2,0"/>
+                            </Border>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="VolumeThumb" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Ellipse Width="18" Height="18" Fill="White"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="TrackButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" Height="26">
+                            <Border Height="4" CornerRadius="2" Background="{TemplateBinding Background}" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Volume" TargetType="Slider">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Border x:Name="B" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6" Padding="2,0">
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource TrackButton}" Background="{StaticResource Accent}" Command="Slider.DecreaseLarge"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource TrackButton}" Background="{StaticResource Widget}" Command="Slider.IncreaseLarge"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource VolumeThumb}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource FocusRing}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Label" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="{StaticResource Weak}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,12,0,6"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12">
+        <DockPanel>
+            <!-- Barre de titre : sert aussi à déplacer la fenêtre. -->
+            <Grid DockPanel.Dock="Top" Height="38" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+                    <Image Source="/BtAudioLink;component/Assets/app.ico" Width="18" Height="18" Margin="0,0,8,0"/>
+                    <TextBlock Text="BtAudioLink" Foreground="{StaticResource Weak}" FontSize="13" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,4,0" VerticalAlignment="Center">
+                    <Button x:Name="SettingsButton" Style="{StaticResource IconBtn}" Content="&#xE713;" Click="SettingsButton_Click"/>
+                    <Button x:Name="CloseButton" Style="{StaticResource IconBtn}" Content="&#xE8BB;" Click="CloseButton_Click"/>
+                </StackPanel>
+            </Grid>
+            <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Card2}"/>
+
+            <Grid Margin="12,12,12,12">
+                <!-- Vue principale -->
+                <StackPanel x:Name="MainView">
+                    <Border CornerRadius="21" Background="{StaticResource Card}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="2">
+                        <UniformGrid Columns="2">
+                            <RadioButton x:Name="SenderRadio" Style="{StaticResource Seg}" GroupName="Role" Click="Role_Click"/>
+                            <RadioButton x:Name="ReceiverRadio" Style="{StaticResource Seg}" GroupName="Role" Click="Role_Click"/>
+                        </UniformGrid>
+                    </Border>
+
+                    <Border Margin="0,10,0,0" CornerRadius="12" Background="{StaticResource Card}" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="14,12">
+                        <DockPanel>
+                            <Viewbox DockPanel.Dock="Left" Width="34" Height="34" Margin="0,0,12,0">
+                                <Canvas Width="36" Height="28">
+                                    <Ellipse x:Name="IconLeft" Canvas.Left="0" Canvas.Top="9" Width="10" Height="10" Fill="#7D7D7D"/>
+                                    <Ellipse x:Name="IconRight" Canvas.Left="26" Canvas.Top="9" Width="10" Height="10" Fill="#7D7D7D"/>
+                                    <Path x:Name="IconWave" Data="M9,14 C12,4 15,4 18,14 S24,24 27,14" Stroke="#7D7D7D" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                </Canvas>
+                            </Viewbox>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="StatusTitle" FontSize="16"/>
+                                <TextBlock x:Name="StatusSub" Foreground="{StaticResource Weak}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Bandeau de mise à jour (caché tant qu'il n'y a rien à installer). -->
+                    <Border x:Name="UpdateBanner" Visibility="Collapsed" Margin="0,10,0,0" CornerRadius="8" Background="#1F3A33" BorderBrush="{StaticResource Accent}" BorderThickness="1" Padding="10,6">
+                        <DockPanel>
+                            <Button x:Name="UpdateInstallButton" DockPanel.Dock="Right" Style="{StaticResource BtnPrimary}" MinHeight="30" Click="UpdateInstall_Click"/>
+                            <TextBlock x:Name="UpdateBannerText" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Button x:Name="StartButton" Margin="0,10,0,0" Style="{StaticResource BtnPrimary}" MinHeight="40" FontSize="15" Click="StartButton_Click"/>
+
+                    <DockPanel Margin="0,8,0,0">
+                        <CheckBox x:Name="AutostartSwitch" DockPanel.Dock="Right" Style="{StaticResource Switch}" Click="Autostart_Click"/>
+                        <TextBlock x:Name="AutostartLabel" Foreground="{StaticResource Weak}" FontSize="13" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- Vue des réglages -->
+                <StackPanel x:Name="SettingsView" Visibility="Collapsed">
+                    <DockPanel>
+                        <Button x:Name="BackButton" DockPanel.Dock="Left" Style="{StaticResource IconBtn}" Content="&#xE72B;" Click="SettingsButton_Click"/>
+                        <TextBlock x:Name="SettingsTitle" FontSize="16" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                    </DockPanel>
+
+                    <StackPanel x:Name="SenderSettings">
+                        <DockPanel>
+                            <Button x:Name="RefreshButton" DockPanel.Dock="Right" Style="{StaticResource IconBtn}" Content="&#xE72C;" Margin="0,6,0,0" Click="Refresh_Click"/>
+                            <TextBlock x:Name="SendToLabel" Style="{StaticResource Label}"/>
+                        </DockPanel>
+                        <StackPanel x:Name="DeviceList"/>
+                        <TextBlock x:Name="NoDeviceText" Foreground="{StaticResource Weak}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed"/>
+                        <DockPanel Margin="0,6,0,0">
+                            <CheckBox x:Name="MuteSwitch" DockPanel.Dock="Right" Style="{StaticResource Switch}" Click="Mute_Click"/>
+                            <TextBlock x:Name="MuteLabel" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                        </DockPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="ReceiverSettings">
+                        <TextBlock x:Name="VolumeLabel" Style="{StaticResource Label}"/>
+                        <Slider x:Name="VolumeSlider" Style="{StaticResource Volume}" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10" ValueChanged="Volume_Changed"/>
+                        <TextBlock x:Name="ProfileLabel" Style="{StaticResource Label}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="LowLatencyRadio" Style="{StaticResource Chip}" GroupName="Profile" Click="Profile_Click"/>
+                            <RadioButton x:Name="StableRadio" Style="{StaticResource Chip}" GroupName="Profile" Click="Profile_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock x:Name="LanguageLabel" Style="{StaticResource Label}"/>
+                    <StackPanel x:Name="LanguageList" Orientation="Horizontal"/>
+
+                    <Border Height="1" Background="{StaticResource Card2}" Margin="0,14,0,10"/>
+                    <TextBlock x:Name="VersionText" Foreground="{StaticResource Weak}" FontSize="12"/>
+                    <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource Weak}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
+                    <Button x:Name="CheckUpdateButton" Style="{StaticResource Btn}" FontSize="13" Margin="0,8,0,0" Click="CheckUpdate_Click"/>
+                    <Button x:Name="ForceUpdateButton" Style="{StaticResource Btn}" FontSize="13" Margin="0,6,0,0" Click="ForceUpdate_Click"/>
+                </StackPanel>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>
