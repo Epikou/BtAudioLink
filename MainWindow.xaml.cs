@@ -172,6 +172,7 @@ public partial class MainWindow : Window
 
     void OnStatus(EngineStatus s)
     {
+        if (reallyClosing) return;          // l'icône de notification n'existe plus pendant la fermeture
         status = s;
         RenderStatus();
     }
@@ -389,9 +390,10 @@ public partial class MainWindow : Window
 
             // On garde « Running » tel quel : la nouvelle version reprendra la liaison toute seule.
             settings.Save();
-            engine.Stop();
-            Updater.ApplyAndRestart(file, minimized: !IsVisible);
             reallyClosing = true;
+            engine.Stop();
+            try { Updater.ApplyAndRestart(file, minimized: !IsVisible); }
+            catch (Exception) { reallyClosing = false; throw; }
             tray.Dispose();
             Application.Current.Shutdown();
         }
