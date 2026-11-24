@@ -30,6 +30,7 @@ public sealed class EngineOptions
     public Role Role;
     public string? TargetAddress;      // émetteur : appareil vers lequel envoyer
     public bool MuteLocal;             // émetteur : couper les haut-parleurs locaux pendant l'envoi
+    public bool FollowVolume = true;   // émetteur : le volume de Windows règle le son joué sur l'autre PC
     public int MarginMs = 40;          // récepteur : marge de sécurité du tampon
     public float Volume = 1f;          // récepteur : volume de lecture
 }
@@ -46,7 +47,7 @@ public sealed class Engine
     const int MaxPayload = 4000;
 
     // Messages : [type : 1 octet][longueur : 2 octets][contenu].
-    const byte MsgHello = 1, MsgAudio = 2, MsgPing = 4, MsgStats = 5;
+    const byte MsgHello = 1, MsgAudio = 2, MsgPing = 4, MsgStats = 5, MsgVolume = 6;
     const byte ProtocolVersion = 2;
 
     public event Action<EngineStatus>? Changed;
@@ -57,6 +58,7 @@ public sealed class Engine
     IDisposable? activeTransport;          // listener ou client en cours, fermé par Stop pour débloquer le fil
     EngineOptions options = new();
     volatile JitterBuffer? liveBuffer;
+    volatile float remoteGain = 1f;     // volume demandé par l'émetteur (1 = plein volume)
 
     public bool Running { get { lock (gate) return cts != null; } }
 
@@ -114,7 +116,7 @@ public sealed class Engine
         options.MarginMs = marginMs;
         options.Volume = volume;
         var b = liveBuffer;
-        if (b != null) { b.SetMargin(marginMs); b.Gain = volume; }
+        if (b != null) { b.SetMargin(marginMs); b.Gain = volume * remoteGain; }
     }
 
     void Publish(EngineStatus s)
@@ -308,6 +310,7 @@ public sealed class Engine
         var pcm = new float[5760 * Channels];
         var payload = new byte[MaxPayload];
         var buffer = new JitterBuffer(format, opts.MarginMs) { Gain = opts.Volume };
+        remoteGain = 1f;
         liveBuffer = buffer;
         using var output = new Player(buffer);
         var stats = Stopwatch.StartNew();
@@ -334,6 +337,17 @@ public sealed class Engine
             {
                 case MsgHello:
                     if (length > 1) name = System.Text.Encoding.UTF8.GetString(payload, 1, length - 1);
+                    break;
+                case MsgVolume:
+                    if (length >= 2)
+                    {
+                        // Courbe quadratique : le curseur de Windows est perceptif, un gain linéaire paraîtrait
+                        // presque sans effet sur la moitié haute de la course.
+                        float level = Math.Clamp(payload[0], (byte)0, (byte)100) / 100f;
+                        remoteGain = payload[1] != 0 ? 0f : level * level;
+                        buffer.Gain = opts.Volume * remoteGain;
+                        Log.Write($"  volume distant : {payload[0]} %{(payload[1] != 0 ? ", muet" : "")}");
+                    }
                     break;
                 case MsgStats:
                     Log.Write("  émetteur : " + System.Text.Encoding.UTF8.GetString(payload, 0, length));
@@ -399,7 +413,10 @@ public sealed class Engine
         reader.Start();
 
         using var capture = new FastLoopbackCapture();
-        using var mute = opts.MuteLocal ? new LocalMute() : null;
+        // Créé après la capture, libéré avant elle : la sourdine locale ne dure que le temps de l'envoi.
+        using var volume = opts.MuteLocal || opts.FollowVolume
+            ? new LocalVolume(opts.MuteLocal, opts.FollowVolume, (level, muted) => send(MsgVolume, new[] { (byte)level, (byte)(muted ? 1 : 0) }, 2))
+            : null;
         var source = new BufferedWaveProvider(capture.WaveFormat)
         {
             // Tampon court : si le Bluetooth ne suit pas, on jette plutôt que d'accumuler du retard.
@@ -492,36 +509,113 @@ public sealed class Engine
     }
 
     /// <summary>
-    /// Coupe la sortie audio locale tant que l'objet existe, puis rétablit l'état d'origine. La capture du son
-    /// système se fait avant le volume du périphérique : elle continue donc malgré la sourdine.
+    /// Volume de la sortie audio locale, côté émetteur. Deux rôles :
+    /// - couper les haut-parleurs locaux pendant l'envoi (la capture du son système se fait avant le volume du
+    ///   périphérique, elle continue donc malgré la sourdine) ;
+    /// - faire du volume de Windows la télécommande du son joué sur l'autre PC, comme avec des écouteurs
+    ///   Bluetooth : le niveau et la sourdine sont envoyés au récepteur, qui les applique.
+    /// Quand les deux sont actifs, la sortie doit rester en sourdine alors que Windows l'enlève dès qu'on touche
+    /// au volume : on la remet aussitôt, et la touche « muet » devient une bascule du son distant.
     /// </summary>
-    sealed class LocalMute : IDisposable
+    sealed class LocalVolume : IDisposable
     {
         readonly MMDevice? device;
-        readonly bool wasMuted;
+        readonly bool wasMuted, enforceMute, follow;
+        readonly Action<int, bool> report;
+        readonly object gate = new();
+        float lastVolume;
+        bool remoteMute;
+        long lastVolumeTick;
+        int sentLevel = -1;
+        bool sentMute;
 
-        public LocalMute()
+        public LocalVolume(bool enforceMute, bool follow, Action<int, bool> report)
         {
+            this.enforceMute = enforceMute;
+            this.follow = follow;
+            this.report = report;
             try
             {
                 device = WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice();
-                wasMuted = device.AudioEndpointVolume.Mute;
-                device.AudioEndpointVolume.Mute = true;
+                var volume = device.AudioEndpointVolume;
+                wasMuted = volume.Mute;
+                lastVolume = volume.MasterVolumeLevelScalar;
+                remoteMute = !enforceMute && wasMuted;
+                if (enforceMute) volume.Mute = true;
+                if (follow)
+                {
+                    volume.OnVolumeNotification += OnNotification;
+                    Report();
+                }
             }
             catch (Exception ex)
             {
-                Log.Write($"Sourdine locale impossible : {ex.Message}");
+                Log.Write($"Volume local inaccessible : {ex.Message}");
                 device = null;
             }
         }
 
+        void OnNotification(AudioVolumeNotificationData data)
+        {
+            bool remute = false;
+            lock (gate)
+            {
+                long now = Environment.TickCount64;
+                bool volumeChanged = Math.Abs(data.MasterVolume - lastVolume) > 0.0005f;
+                if (volumeChanged)
+                {
+                    lastVolume = data.MasterVolume;
+                    lastVolumeTick = now;
+                }
+
+                if (!enforceMute)
+                {
+                    remoteMute = data.Muted;
+                }
+                else
+                {
+                    // Toucher au volume rétablit toujours le son distant, comme le fait Windows pour le son local.
+                    if (volumeChanged) remoteMute = false;
+                    if (!data.Muted)
+                    {
+                        // Sourdine enlevée sans changement de volume récent : c'est la touche « muet ».
+                        if (!volumeChanged && now - lastVolumeTick > 300) remoteMute = !remoteMute;
+                        remute = true;
+                    }
+                }
+                Report();
+            }
+
+            // Hors de la notification elle-même : modifier le volume depuis son propre rappel peut bloquer.
+            if (remute)
+            {
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try { device!.AudioEndpointVolume.Mute = true; } catch (Exception) { }
+                });
+            }
+        }
+
+        void Report()
+        {
+            int level = (int)Math.Round(lastVolume * 100);
+            if (level == sentLevel && remoteMute == sentMute) return;
+            sentLevel = level;
+            sentMute = remoteMute;
+            try { report(level, remoteMute); } catch (Exception) { }
+        }
+
         public void Dispose()
         {
-            try { if (device != null && !wasMuted) device.AudioEndpointVolume.Mute = false; }
+            if (device == null) return;
+            try
+            {
+                if (follow) device.AudioEndpointVolume.OnVolumeNotification -= OnNotification;
+                if (enforceMute && !wasMuted) device.AudioEndpointVolume.Mute = false;
+            }
             catch (Exception) { }
         }
     }
-
     /// <summary>
     /// Sortie audio qui suit le périphérique par défaut de Windows : si on allume/éteint un casque ou qu'on
     /// change de sortie, la lecture s'arrête côté Windows et il faut la rouvrir sur le nouveau périphérique.

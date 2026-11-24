@@ -357,6 +357,10 @@
                             <CheckBox x:Name="MuteSwitch" DockPanel.Dock="Right" Style="{StaticResource Switch}" Click="Mute_Click"/>
                             <TextBlock x:Name="MuteLabel" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>
                         </DockPanel>
+                        <DockPanel Margin="0,2,0,0">
+                            <CheckBox x:Name="FollowSwitch" DockPanel.Dock="Right" Style="{StaticResource Switch}" Click="Follow_Click"/>
+                            <TextBlock x:Name="FollowLabel" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                        </DockPanel>
                     </StackPanel>
 
                     <StackPanel x:Name="ReceiverSettings">

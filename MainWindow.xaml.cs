@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         ReceiverRadio.IsChecked = settings.Role == Role.Receiver;
         AutostartSwitch.IsChecked = Settings.Autostart;
         MuteSwitch.IsChecked = settings.MuteLocal;
+        FollowSwitch.IsChecked = settings.FollowVolume;
         VolumeSlider.Value = settings.Volume;
         LowLatencyRadio.IsChecked = !settings.Stable;
         StableRadio.IsChecked = settings.Stable;
@@ -148,6 +149,7 @@ public partial class MainWindow : Window
         SendToLabel.Text = Loc.T("SendTo");
         NoDeviceText.Text = Loc.T("NoPaired");
         MuteLabel.Text = Loc.T("MuteLocal");
+        FollowLabel.Text = Loc.T("FollowVolume");
         VolumeLabel.Text = Loc.T("Volume");
         ProfileLabel.Text = Loc.T("Profile");
         LowLatencyRadio.Content = Loc.T("LowLatency");
@@ -223,6 +225,7 @@ public partial class MainWindow : Window
         Role = settings.Role,
         TargetAddress = settings.TargetAddress,
         MuteLocal = settings.MuteLocal,
+        FollowVolume = settings.FollowVolume,
         MarginMs = settings.MarginMs,
         Volume = settings.Volume / 100f,
     };
@@ -308,6 +311,13 @@ public partial class MainWindow : Window
         settings.Save();
         if (engine.Running && settings.Role == Role.Sender) engine.Start(Options());
         RenderStatus();
+    }
+
+    void Follow_Click(object sender, RoutedEventArgs e)
+    {
+        settings.FollowVolume = FollowSwitch.IsChecked == true;
+        settings.Save();
+        if (engine.Running && settings.Role == Role.Sender) engine.Start(Options());
     }
 
     void Mute_Click(object sender, RoutedEventArgs e)

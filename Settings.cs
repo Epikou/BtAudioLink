@@ -11,6 +11,8 @@ public sealed class Settings
     public string? TargetAddress { get; set; }
     public string? TargetName { get; set; }
     public bool MuteLocal { get; set; } = true;
+    /// <summary>Émetteur : le volume de Windows règle le son joué sur l'autre PC (comme des écouteurs Bluetooth).</summary>
+    public bool FollowVolume { get; set; } = true;
     /// <summary>true = profil « stable » (plus de marge, moins de coupures), false = latence minimale.</summary>
     public bool Stable { get; set; }
     public int Volume { get; set; } = 100;
