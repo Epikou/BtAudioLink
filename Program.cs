@@ -10,6 +10,8 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        Realtime.ConfigureProcess();
+
         bool minimized = args.Contains("--minimized");
         bool updated = args.Contains("--updated");
 

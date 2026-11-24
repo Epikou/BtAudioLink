@@ -46,7 +46,7 @@ public sealed class Engine
     const int MaxPayload = 4000;
 
     // Messages : [type : 1 octet][longueur : 2 octets][contenu].
-    const byte MsgHello = 1, MsgAudio = 2, MsgPing = 4;
+    const byte MsgHello = 1, MsgAudio = 2, MsgPing = 4, MsgStats = 5;
     const byte ProtocolVersion = 2;
 
     public event Action<EngineStatus>? Changed;
@@ -274,6 +274,7 @@ public sealed class Engine
             }) { IsBackground = true, Name = "battement" };
             pinger.Start();
 
+            using var priority = Realtime.AudioThread();
             if (opts.Role == Role.Sender) SenderSession(stream, Send, opts, linked.Token, peer, done);
             else ReceiverSession(stream, opts, linked.Token, peer);
         }
@@ -313,9 +314,17 @@ public sealed class Engine
         string name = peer;
         var buffered = new BufferedStream(stream, 64 * 1024);
 
+        // Mesures pour le journal (toutes les 5 s) : elles servent à régler la liaison sans tâtonner.
+        var clock = Stopwatch.StartNew();
+        var wait = new Stopwatch();
+        var logTimer = Stopwatch.StartNew();
+        long totalSamples = 0, receivedSamples = 0, maxWait = 0;
+        double lateMin = double.MaxValue, lateMax = double.MinValue;
+
         Publish(new EngineStatus(LinkState.Connected, Role.Receiver, name, null, 0, 0));
         while (!token.IsCancellationRequested)
         {
+            wait.Restart();
             var (type, length) = ReadFrame(buffered, payload);
             output.Ensure();
             switch (type)
@@ -323,8 +332,19 @@ public sealed class Engine
                 case MsgHello:
                     if (length > 1) name = System.Text.Encoding.UTF8.GetString(payload, 1, length - 1);
                     break;
+                case MsgStats:
+                    Log.Write("  émetteur : " + System.Text.Encoding.UTF8.GetString(payload, 0, length));
+                    break;
                 case MsgAudio:
+                    if (wait.ElapsedMilliseconds > maxWait) maxWait = wait.ElapsedMilliseconds;
                     int samples = decoder.Decode(payload, 0, length, pcm, 0, 5760, false);
+                    // Retard de la trame par rapport à un flux parfaitement régulier : l'écart entre le plus
+                    // grand et le plus petit retard est la gigue que le tampon doit absorber.
+                    double late = clock.Elapsed.TotalMilliseconds - totalSamples * 1000.0 / Rate;
+                    totalSamples += samples;
+                    receivedSamples += samples;
+                    if (late < lateMin) lateMin = late;
+                    if (late > lateMax) lateMax = late;
                     buffer.Add(pcm, samples * Channels);
                     break;
             }
@@ -334,6 +354,16 @@ public sealed class Engine
                 var (advance, holes) = buffer.TakeStats();
                 Publish(new EngineStatus(LinkState.Connected, Role.Receiver, name, null, advance, holes));
                 stats.Restart();
+            }
+
+            if (logTimer.ElapsedMilliseconds >= 5000)
+            {
+                double jitter = lateMax >= lateMin ? lateMax - lateMin : 0;
+                Log.Write($"  mesures : {receivedSamples / (double)Rate:0.0} s de son en {logTimer.Elapsed.TotalSeconds:0.0} s, gigue {jitter:0} ms, attente max {maxWait} ms, {buffer.Describe()}");
+                receivedSamples = maxWait = 0;
+                lateMin = double.MaxValue;
+                lateMax = double.MinValue;
+                logTimer.Restart();
             }
         }
     }
@@ -375,8 +405,11 @@ public sealed class Engine
             ReadFully = false,
         };
         using var signal = new AutoResetEvent(false);
+        long capturedFrames = 0;
+        int blockAlign = capture.WaveFormat.BlockAlign;
         capture.DataAvailable += (_, e) =>
         {
+            Interlocked.Add(ref capturedFrames, e.BytesRecorded / blockAlign);
             source.AddSamples(e.Buffer, 0, e.BytesRecorded);
             try { signal.Set(); } catch (ObjectDisposedException) { }
         };
@@ -400,6 +433,9 @@ public sealed class Engine
         var frame = new float[FrameSamples * Channels];
         var packet = new byte[MaxPayload];
         int filled = 0;
+        long sentSamples = 0, maxWrite = 0;
+        var writeTimer = new Stopwatch();
+        var report = Stopwatch.StartNew();
 
         capture.StartRecording();
         Publish(new EngineStatus(LinkState.Connected, Role.Sender, name, null, 0, 0));
@@ -418,7 +454,21 @@ public sealed class Engine
                 filled = 0;
 
                 int len = encoder.Encode(frame, 0, FrameSamples, packet, 0, MaxPayload);
+                writeTimer.Restart();
                 send(MsgAudio, packet, len);
+                if (writeTimer.ElapsedMilliseconds > maxWrite) maxWrite = writeTimer.ElapsedMilliseconds;
+                sentSamples += FrameSamples;
+
+                // Compte rendu au récepteur toutes les 5 s : c'est lui qui tient le journal de la liaison.
+                if (report.ElapsedMilliseconds >= 5000)
+                {
+                    double captured = Interlocked.Exchange(ref capturedFrames, 0) / (double)capture.WaveFormat.SampleRate;
+                    string text = $"capté {captured:0.0} s, envoyé {sentSamples / (double)Rate:0.0} s en {report.Elapsed.TotalSeconds:0.0} s, écriture max {maxWrite} ms";
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+                    send(MsgStats, bytes, bytes.Length);
+                    sentSamples = maxWrite = 0;
+                    report.Restart();
+                }
             }
         }
         finally
@@ -660,10 +710,12 @@ public sealed class Engine
                     buffering = true;
                     pendingTick = now;
                     toDrop = 0;
+                    logMin = 0;
                     return n;
                 }
 
                 if (count < windowMin) windowMin = count;
+                if (count < logMin) logMin = count;
 
                 if (now - windowStart >= 2000)
                 {
@@ -691,7 +743,23 @@ public sealed class Engine
             {
                 int holes = underruns;
                 underruns = 0;
+                logHoles += holes;
                 return (ToMs(count), holes);
+            }
+        }
+
+        int logHoles, logMin = int.MaxValue;
+
+        /// <summary>Résumé pour le journal : marge, avance, niveau le plus bas et trous depuis le dernier appel.</summary>
+        public string Describe()
+        {
+            lock (gate)
+            {
+                string min = logMin == int.MaxValue ? "-" : ToMs(logMin).ToString();
+                string s = $"marge {ToMs(margin + extra)} ms, avance {ToMs(count)} ms, plancher {min} ms, {logHoles} trous";
+                logHoles = 0;
+                logMin = int.MaxValue;
+                return s;
             }
         }
     }
